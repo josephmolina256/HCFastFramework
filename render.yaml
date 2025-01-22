@@ -1,9 +1,9 @@
 services:
   - type: web
     name: hc-docker-deployment
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:8000 --workers 1
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
     envVars:
       - key: HUGGINGFACE_EMAIL
         value: joseph.molina@ufl.edu # Replace with your actual environment variable value
@@ -11,4 +11,3 @@ services:
         value: 20050510As;)     # Replace with your actual environment variable value
       - key: HUGGINGFACE_COOKIE_DIR
         value: ./cookies/
-    plan: free
