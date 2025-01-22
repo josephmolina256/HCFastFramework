@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
+from time import time
 
 # Assuming the chatbot logic is in a separate file (chatbot/chatbot.py)
 from .chatbot.chatbot import HuggingChatWrapper
@@ -38,8 +39,12 @@ async def chat(query: Query, wrapper: HuggingChatWrapper = Depends(get_chat_wrap
     Calls the HuggingChat API and returns the response.
     """
     try:
+        start = time()
         response = wrapper.get_chatbot().chat(query.text).wait_until_done()
-        return {"response": response}
+        return {
+            "response": response,
+            "latency": (time() - start)
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
     

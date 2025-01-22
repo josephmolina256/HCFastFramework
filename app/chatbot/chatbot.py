@@ -19,6 +19,8 @@ class HuggingChatWrapper:
             raise ValueError("Missing HUGGINGFACE_EMAIL or HUGGINGFACE_PASSWORD in environment variables.")
 
         self._chatbot_instance = None  # Singleton instance placeholder
+        print("initialized NEW HuggingChatWrapper")
+
 
     def get_chatbot(self) -> hugchat.ChatBot:
         """Initialize and return a singleton instance of the ChatBot."""
@@ -31,6 +33,7 @@ class HuggingChatWrapper:
                     cookies=cookies.get_dict(),
                     default_llm="meta-llama/Llama-3.3-70B-Instruct"
                 )
+                print("initialized a NEW hugchat ChatBot")
             except Exception as e:
                 raise RuntimeError(f"Failed to initialize ChatBot: {e}")
         return self._chatbot_instance
