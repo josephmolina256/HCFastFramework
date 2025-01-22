@@ -27,7 +27,10 @@ class HuggingChatWrapper:
                 # Authenticate and store the cookies
                 sign = Login(self.__email, self.__password)
                 cookies = sign.login(cookie_dir_path=self.__cookie_path_dir, save_cookies=True)
-                self._chatbot_instance = hugchat.ChatBot(cookies=cookies.get_dict())
+                self._chatbot_instance = hugchat.ChatBot(
+                    cookies=cookies.get_dict(),
+                    default_llm="meta-llama/Llama-3.3-70B-Instruct"
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to initialize ChatBot: {e}")
         return self._chatbot_instance

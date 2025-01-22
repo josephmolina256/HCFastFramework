@@ -42,3 +42,15 @@ async def chat(query: Query, wrapper: HuggingChatWrapper = Depends(get_chat_wrap
         return {"response": response}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
+    
+
+@app.get("/list_llms/")
+async def list_llms(wrapper: HuggingChatWrapper = Depends(get_chat_wrapper)):
+    """
+    Calls the HuggingChat API and returns the response.
+    """
+    try:
+        response = wrapper.get_chatbot().get_remote_llms()
+        return {"response": response}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
