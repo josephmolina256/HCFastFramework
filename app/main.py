@@ -1,13 +1,29 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from pydantic import BaseModel
+
 from time import time
+import logging
 
 # Assuming the chatbot logic is in a separate file (chatbot/chatbot.py)
 from .chatbot.chatbot import HuggingChatWrapper
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI()
 chat_wrapper = HuggingChatWrapper() # singleton instance
+
+# Middleware to log requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Log request details
+    logging.info(f"Request: {request.method} {request.url}")
+    logging.info(f"Headers: {dict(request.headers)}")
+    logging.info(f"Body: {await request.body()}")
+    
+    response = await call_next(request)
+    # Log response status
+    logging.info(f"Response status: {response.status_code}")
+    return response
 
 # dependency injection helper
 def get_chat_wrapper() -> HuggingChatWrapper:
