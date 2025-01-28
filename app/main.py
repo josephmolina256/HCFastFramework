@@ -9,6 +9,7 @@ from rq import Queue
 from .chatbot.chatbot import HuggingChatWrapper
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+import time
 
 load_dotenv()
 
@@ -37,6 +38,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # In-memory logging of job results (for demonstration)
 job_results = {}
 
+# Store active jobs
+active_jobs = {}
+
+# Rate limit for processing messages
+last_processed_time = {}
+
 # Chat wrapper
 chat_wrapper = HuggingChatWrapper()  # Singleton chat wrapper
 
@@ -52,10 +59,12 @@ def process_chat(job_id: str, text: str):
         logging.info(f"Job {job_id} completed with response: {response}")
         # Store the result in Redis
         r.set(job_id, response)
+        active_jobs.pop(job_id, None)  # Remove the job from active jobs after completion
     except Exception as e:
         logging.error(f"Job {job_id} failed: {str(e)}")
         # Store error message in Redis
         r.set(job_id, f"Error: {str(e)}")
+        active_jobs.pop(job_id, None)  # Remove job on failure
 
 @app.post("/chat/")
 async def chat(query: Query, background_tasks: BackgroundTasks):
@@ -67,6 +76,9 @@ async def chat(query: Query, background_tasks: BackgroundTasks):
 
     # Add the job to the Redis queue
     background_tasks.add_task(process_chat, job_id, query.text)
+
+    # Add to active jobs
+    active_jobs[job_id] = time.time()
 
     # Return the job ID to the client
     return {"job_id": job_id, "status": "processing"}
@@ -106,11 +118,23 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         message_text = slack_message.get("text")
         channel_id = slack_message.get("channel")
         
-        # Check if the message starts with "echo:"
-        if message_text.lower().startswith("echo:"):
+        # Check if the message is a command to stop
+        if message_text.lower() == "command: stop":
+            # Stop all active jobs by clearing them (or implement actual cancellation)
+            active_jobs.clear()
+            response_message = "All jobs have been stopped."
+        elif message_text.lower().startswith("echo:"):
             # Just echo the message text, removing the "echo:" prefix
             response_message = message_text[5:].strip()  # Remove "echo:" and any surrounding whitespace
         else:
+            # Rate limit processing status messages to once every 10 seconds
+            current_time = time.time()
+            if current_time - last_processed_time.get(channel_id, 0) > 10:
+                last_processed_time[channel_id] = current_time
+                response_message = "Processing your request..."
+            else:
+                response_message = ""  # Don't send a processing message if under rate limit
+
             # Generate a job ID for the chat
             job_id = str(uuid.uuid4())
 
@@ -127,12 +151,15 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
 
         # Respond to Slack with the generated response
         try:
-            response = slack_client.chat_postMessage(
-                channel=channel_id,
-                text=response_message
-            )
+            if response_message:
+                response = slack_client.chat_postMessage(
+                    channel=channel_id,
+                    text=response_message
+                )
+            else:
+                logging.info("Rate-limited: Not sending processing message.")
         except SlackApiError as e:
             response = e.response
             logging.error(f"Error sending message to Slack: {e.response['error']}")
 
-    return {"res": response}
+    return {"res": "ok"}
