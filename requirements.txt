@@ -3,3 +3,5 @@ uvicorn
 gunicorn
 hugchat
 python-dotenv
+redis
+rq
