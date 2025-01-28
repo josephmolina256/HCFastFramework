@@ -1,77 +1,79 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
+import os
+from dotenv import load_dotenv
+import uuid
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
-
-from time import time
 import logging
-
-# Assuming the chatbot logic is in a separate file (chatbot/chatbot.py)
+from redis import Redis
+from rq import Queue
 from .chatbot.chatbot import HuggingChatWrapper
 
+load_dotenv()
+# Retrieve Redis configuration from environment variables
+redis_host = os.getenv('REDIS_HOST')
+redis_port = int(os.getenv('REDIS_PORT', 11835))
+redis_password = os.getenv('REDIS_PASSWORD')
+
+r = Redis(
+    host=redis_host,
+    port=redis_port,
+    decode_responses=True,
+    username="default",
+    password=redis_password,
+)
+queue = Queue("tasks", connection=r)
+
+# FastAPI app
+app = FastAPI()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-app = FastAPI()
-chat_wrapper = HuggingChatWrapper() # singleton instance
+# In-memory logging of job results (for demonstration)
+job_results = {}
 
-# Middleware to log requests
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    # Log request details
-    logging.info(f"Request: {request.method} {request.url}")
-    logging.info(f"Headers: {dict(request.headers)}")
-    logging.info(f"Body: {await request.body()}")
-    
-    response = await call_next(request)
-    # Log response status
-    logging.info(f"Response status: {response.status_code}")
-    return response
+# Chat wrapper
+chat_wrapper = HuggingChatWrapper()  # Singleton chat wrapper
 
-# dependency injection helper
-def get_chat_wrapper() -> HuggingChatWrapper:
-    return chat_wrapper
-
+# Pydantic model for requests
 class Query(BaseModel):
     text: str
 
-@app.get("/")
-async def ping():
-    """
-    Health check for the API
-    """
-    return {"message": "Hello, World!"}
-
-@app.post("/echo/")
-async def echo(query: Query):
-    """
-    Echo's back the user's input. 
-    Good test for when the LLM integration comes in.
-    """
-    if not query.text.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
-    return {"echo": query.text}
+# Function to process chat asynchronously
+def process_chat(job_id: str, text: str):
+    try:
+        chatbot = chat_wrapper.get_chatbot()
+        response = chatbot.chat(text).wait_until_done()  # Blocking call to LLM
+        logging.info(f"Job {job_id} completed with response: {response}")
+        # Store the result in Redis
+        r.set(job_id, response)
+    except Exception as e:
+        logging.error(f"Job {job_id} failed: {str(e)}")
+        # Store error message in Redis
+        r.set(job_id, f"Error: {str(e)}")
 
 @app.post("/chat/")
-async def chat(query: Query, wrapper: HuggingChatWrapper = Depends(get_chat_wrapper)):
+async def chat(query: Query, background_tasks: BackgroundTasks):
     """
-    Calls the HuggingChat API and returns the response.
+    Accepts a chat request, runs it in the background, and returns a job ID.
     """
-    try:
-        start = time()
-        response = wrapper.get_chatbot().chat(query.text).wait_until_done()
-        return {
-            "response": response,
-            "latency": (time() - start)
-            }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
-    
+    # Generate a unique job ID
+    job_id = str(uuid.uuid4())
 
-@app.get("/list_llms/")
-async def list_llms(wrapper: HuggingChatWrapper = Depends(get_chat_wrapper)):
+    # Add the job to the Redis queue
+    background_tasks.add_task(process_chat, job_id, query.text)
+
+    # Return the job ID to the client
+    return {"job_id": job_id, "status": "processing"}
+
+@app.get("/result/{job_id}")
+async def get_result(job_id: str):
     """
-    Calls the HuggingChat API and returns the response.
+    Fetches the result of a chat job by its ID from Redis.
     """
-    try:
-        response = wrapper.get_chatbot().get_remote_llms()
-        return {"response": response}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during chat: {str(e)}")
+    result = r.get(job_id)
+    if result is None:
+        return {"status": "processing", "message": "Job is still being processed."}
+    return {"status": "completed", "response": result}
+
+@app.get("/")
+async def ping():
+    return {"message": "Hello, World!"}
