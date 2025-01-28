@@ -87,7 +87,7 @@ async def ping():
 
 # Slack event handling route
 @app.post("/slack/events")
-async def slack_events(request: Request):
+async def slack_events(request: Request, background_tasks: BackgroundTasks):
     slack_event = await request.json()
 
     # Verify the Slack challenge (for URL verification)
@@ -106,19 +106,24 @@ async def slack_events(request: Request):
         message_text = slack_message.get("text")
         channel_id = slack_message.get("channel")
         
-        # Generate a job ID for the chat
-        job_id = str(uuid.uuid4())
-
-        # Send the message to your API (use your chatbot endpoint)
-        background_tasks.add_task(process_chat, job_id, message_text)
-
-        # Wait for the result (you can add a timeout here)
-        result = r.get(job_id)
-
-        if result is None:
-            response_message = "Processing your request..."
+        # Check if the message starts with "echo:"
+        if message_text.lower().startswith("echo:"):
+            # Just echo the message text, removing the "echo:" prefix
+            response_message = message_text[5:].strip()  # Remove "echo:" and any surrounding whitespace
         else:
-            response_message = result
+            # Generate a job ID for the chat
+            job_id = str(uuid.uuid4())
+
+            # Send the message to your API (use your chatbot endpoint)
+            background_tasks.add_task(process_chat, job_id, message_text)
+
+            # Wait for the result (you can add a timeout here)
+            result = r.get(job_id)
+
+            if result is None:
+                response_message = "Processing your request..."
+            else:
+                response_message = result
 
         # Respond to Slack with the generated response
         try:
@@ -127,7 +132,7 @@ async def slack_events(request: Request):
                 text=response_message
             )
         except SlackApiError as e:
+            response = e.response
             logging.error(f"Error sending message to Slack: {e.response['error']}")
 
-    return {"status": "ok"}
-
+    return {"res": response}
