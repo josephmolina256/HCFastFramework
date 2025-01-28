@@ -28,7 +28,7 @@ class HuggingChatWrapper:
             try:
                 # Authenticate and store the cookies
                 sign = Login(self.__email, self.__password)
-                cookies = sign.login(cookie_dir_path=self.__cookie_path_dir, save_cookies=True)
+                cookies = sign.login()
                 self._chatbot_instance = hugchat.ChatBot(
                     cookies=cookies.get_dict(),
                     default_llm="meta-llama/Llama-3.3-70B-Instruct"
