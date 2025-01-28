@@ -51,20 +51,27 @@ chat_wrapper = HuggingChatWrapper()  # Singleton chat wrapper
 class Query(BaseModel):
     text: str
 
-# Function to process chat asynchronously
 def process_chat(job_id: str, text: str):
     try:
+        # Check for stop signal in Redis
+        if r.get("stop_flag") == "true":
+            logging.info(f"Job {job_id} has been stopped.")
+            return
+
         chatbot = chat_wrapper.get_chatbot()
         response = chatbot.chat(text).wait_until_done()  # Blocking call to LLM
         logging.info(f"Job {job_id} completed with response: {response}")
         # Store the result in Redis
         r.set(job_id, response)
-        active_jobs.pop(job_id, None)  # Remove the job from active jobs after completion
     except Exception as e:
         logging.error(f"Job {job_id} failed: {str(e)}")
         # Store error message in Redis
         r.set(job_id, f"Error: {str(e)}")
-        active_jobs.pop(job_id, None)  # Remove job on failure
+    finally:
+        # Remove the job from active jobs
+        active_jobs.pop(job_id, None)
+
+
 
 @app.post("/chat/")
 async def chat(query: Query, background_tasks: BackgroundTasks):
@@ -97,7 +104,6 @@ async def get_result(job_id: str):
 async def ping():
     return {"message": "Hello, World!"}
 
-# Slack event handling route
 @app.post("/slack/events")
 async def slack_events(request: Request, background_tasks: BackgroundTasks):
     slack_event = await request.json()
@@ -117,10 +123,11 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         # Get the message text and channel ID
         message_text = slack_message.get("text")
         channel_id = slack_message.get("channel")
-        
+
         # Check if the message is a command to stop
         if message_text.lower() == "command: stop":
-            # Stop all active jobs by clearing them (or implement actual cancellation)
+            # Set the stop flag in Redis to true
+            r.set("stop_flag", "true")
             active_jobs.clear()
             response_message = "All jobs have been stopped."
         elif message_text.lower().startswith("echo:"):
