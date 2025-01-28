@@ -105,7 +105,7 @@ async def ping():
     return {"message": "Hello, World!"}
 
 @app.post("/slack/events")
-async def slack_events(request: Request, background_tasks: BackgroundTasks):
+async def slack_events(request: Request):
     slack_event = await request.json()
 
     # Verify the Slack challenge (for URL verification)
@@ -124,37 +124,12 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         message_text = slack_message.get("text")
         channel_id = slack_message.get("channel")
 
-        # Check if the message is a command to stop
-        if message_text.lower() == "command: stop":
-            # Set the stop flag in Redis to true
-            r.set("stop_flag", "true")
-            active_jobs.clear()
-            response_message = "All jobs have been stopped."
-        elif message_text.lower().startswith("echo:"):
+        # Check if the message is an "echo:" command
+        if message_text.lower().startswith("echo:"):
             # Just echo the message text, removing the "echo:" prefix
             response_message = message_text[5:].strip()  # Remove "echo:" and any surrounding whitespace
         else:
-            # Rate limit processing status messages to once every 10 seconds
-            current_time = time.time()
-            if current_time - last_processed_time.get(channel_id, 0) > 10:
-                last_processed_time[channel_id] = current_time
-                response_message = "Processing your request..."
-            else:
-                response_message = ""  # Don't send a processing message if under rate limit
-
-            # Generate a job ID for the chat
-            job_id = str(uuid.uuid4())
-
-            # Send the message to your API (use your chatbot endpoint)
-            background_tasks.add_task(process_chat, job_id, message_text)
-
-            # Wait for the result (you can add a timeout here)
-            result = r.get(job_id)
-
-            if result is None:
-                response_message = "Processing your request..."
-            else:
-                response_message = result
+            response_message = "No valid command found."
 
         # Respond to Slack with the generated response
         try:
@@ -163,10 +138,7 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
                     channel=channel_id,
                     text=response_message
                 )
-            else:
-                logging.info("Rate-limited: Not sending processing message.")
         except SlackApiError as e:
-            response = e.response
             logging.error(f"Error sending message to Slack: {e.response['error']}")
 
     return {"res": "ok"}
