@@ -5,3 +5,4 @@ hugchat
 python-dotenv
 redis
 rq
+slack-sdk

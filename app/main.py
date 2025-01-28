@@ -1,14 +1,17 @@
 import os
 from dotenv import load_dotenv
 import uuid
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 import logging
 from redis import Redis
 from rq import Queue
 from .chatbot.chatbot import HuggingChatWrapper
+from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 load_dotenv()
+
 # Retrieve Redis configuration from environment variables
 redis_host = os.getenv('REDIS_HOST')
 redis_port = int(os.getenv('REDIS_PORT', 11835))
@@ -22,6 +25,10 @@ r = Redis(
     password=redis_password,
 )
 queue = Queue("tasks", connection=r)
+
+# Initialize Slack client
+slack_token = os.getenv('SLACK_BOT_TOKEN')
+slack_client = WebClient(token=slack_token)
 
 # FastAPI app
 app = FastAPI()
@@ -77,3 +84,50 @@ async def get_result(job_id: str):
 @app.get("/")
 async def ping():
     return {"message": "Hello, World!"}
+
+# Slack event handling route
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    slack_event = await request.json()
+
+    # Verify the Slack challenge (for URL verification)
+    if "challenge" in slack_event:
+        return {"challenge": slack_event["challenge"]}
+
+    # Handle message events
+    if "event" in slack_event:
+        slack_message = slack_event["event"]
+
+        # Ignore bot messages (to avoid infinite loops)
+        if slack_message.get("subtype") == "bot_message":
+            return {"status": "ok"}
+
+        # Get the message text and channel ID
+        message_text = slack_message.get("text")
+        channel_id = slack_message.get("channel")
+        
+        # Generate a job ID for the chat
+        job_id = str(uuid.uuid4())
+
+        # Send the message to your API (use your chatbot endpoint)
+        background_tasks.add_task(process_chat, job_id, message_text)
+
+        # Wait for the result (you can add a timeout here)
+        result = r.get(job_id)
+
+        if result is None:
+            response_message = "Processing your request..."
+        else:
+            response_message = result
+
+        # Respond to Slack with the generated response
+        try:
+            response = slack_client.chat_postMessage(
+                channel=channel_id,
+                text=response_message
+            )
+        except SlackApiError as e:
+            logging.error(f"Error sending message to Slack: {e.response['error']}")
+
+    return {"status": "ok"}
+
